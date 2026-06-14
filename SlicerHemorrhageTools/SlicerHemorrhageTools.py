@@ -82,10 +82,10 @@ class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget):
         brushLayout = qt.QHBoxLayout()
         brushSmallerButton = qt.QPushButton("Brush Smaller")
         brushLargerButton = qt.QPushButton("Brush Larger")
-        brushSmallerButton.toolTip = "Decrease Paint/Erase brush diameter."
-        brushLargerButton.toolTip = "Increase Paint/Erase brush diameter."
-        brushSmallerButton.clicked.connect(lambda: self.onAdjustBrush(-1.0))
-        brushLargerButton.clicked.connect(lambda: self.onAdjustBrush(1.0))
+        brushSmallerButton.toolTip = "Decrease Paint/Erase relative brush size."
+        brushLargerButton.toolTip = "Increase Paint/Erase relative brush size."
+        brushSmallerButton.clicked.connect(lambda: self.onAdjustBrush(-1))
+        brushLargerButton.clicked.connect(lambda: self.onAdjustBrush(1))
         brushLayout.addWidget(brushSmallerButton)
         brushLayout.addWidget(brushLargerButton)
         formLayout.addRow(brushLayout)
@@ -156,9 +156,9 @@ class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget):
             raise RuntimeError("HU range minimum must be less than or equal to maximum.")
         return minimumHu, maximumHu
 
-    def onAdjustBrush(self, deltaMm):
+    def onAdjustBrush(self, deltaPercent):
         try:
-            self.logic.adjustBrushSize(deltaMm)
+            self.logic.adjustBrushSize(deltaPercent)
             self.updateStatus()
         except Exception as exc:
             self.reportError(exc)
@@ -185,8 +185,8 @@ class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget):
 class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
     BRAIN_WINDOW = 80
     BRAIN_LEVEL = 40
-    DEFAULT_BRUSH_DIAMETER_MM = 5.0
-    MIN_BRUSH_DIAMETER_MM = 0.5
+    DEFAULT_BRUSH_RELATIVE_PERCENT = 3
+    MIN_BRUSH_RELATIVE_PERCENT = 1
 
     def __init__(self):
         ScriptedLoadableModuleLogic.__init__(self)
@@ -225,15 +225,15 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
         self.currentTool = effectName
         self.currentMaskRange = (minimumHu, maximumHu)
 
-    def adjustBrushSize(self, deltaMm):
+    def adjustBrushSize(self, deltaPercent):
         editorWidget = self.segmentEditorWidget()
         activeEffect = editorWidget.activeEffect()
         if not activeEffect:
             raise RuntimeError("No active Paint or Erase effect. Choose one of the mode buttons first.")
 
-        currentDiameter = self.brushDiameter(activeEffect)
-        newDiameter = max(self.MIN_BRUSH_DIAMETER_MM, currentDiameter + deltaMm)
-        activeEffect.setParameter("BrushAbsoluteDiameter", str(newDiameter))
+        currentPercent = self.brushRelativePercent(activeEffect)
+        newPercent = max(self.MIN_BRUSH_RELATIVE_PERCENT, currentPercent + deltaPercent)
+        self.setBrushRelativePercent(activeEffect, newPercent)
 
     def toggleIntensityMask(self):
         editorWidget = self.segmentEditorWidget()
@@ -328,20 +328,24 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
         activeEffect = editorWidget.activeEffect()
         if not activeEffect:
             return
-        if self.brushDiameter(activeEffect) <= 0:
-            activeEffect.setParameter("BrushAbsoluteDiameter", str(self.DEFAULT_BRUSH_DIAMETER_MM))
+        if self.brushRelativePercent(activeEffect) <= 0:
+            self.setBrushRelativePercent(activeEffect, self.DEFAULT_BRUSH_RELATIVE_PERCENT)
 
-    def brushDiameter(self, activeEffect):
-        value = activeEffect.parameter("BrushAbsoluteDiameter")
+    def brushRelativePercent(self, activeEffect):
+        value = activeEffect.parameter("BrushRelativeDiameter")
         try:
-            return float(value)
+            return int(round(float(value)))
         except (TypeError, ValueError):
-            return self.DEFAULT_BRUSH_DIAMETER_MM
+            return self.DEFAULT_BRUSH_RELATIVE_PERCENT
+
+    def setBrushRelativePercent(self, activeEffect, percent):
+        activeEffect.setParameter("BrushAbsoluteDiameter", "0")
+        activeEffect.setParameter("BrushRelativeDiameter", str(int(percent)))
 
     def brushStatus(self, activeEffect):
         if not activeEffect:
             return "No active brush"
-        return f"{self.brushDiameter(activeEffect):g} mm"
+        return f"{self.brushRelativePercent(activeEffect)}%"
 
     def effectName(self, activeEffect):
         name = getattr(activeEffect, "name", None)
