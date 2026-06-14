@@ -14,6 +14,7 @@ HU-constrained Paint and Erase workflows:
 - Toggle overwrite behavior between **do not overwrite segments** and
   **overwrite visible segments**
 - Show current tool, HU mask, and brush status
+- Print current segment names and volumes in mL
 - Validate source volume, segmentation, and active segment before enabling
   workflow buttons
 - Keyboard shortcuts for brush size and workflow modes
@@ -60,6 +61,7 @@ This module is intended for 3D Slicer 5.10.
 5. Adjust either HU range if needed.
 6. Choose the overwrite behavior.
 7. Click the desired workflow button.
+8. Click **Refresh Segment Volumes** to list segment names and volumes.
 
 The module uses the current Segment Editor context. It does not create a new
 segmentation or force re-selection of volumes. If Segment Editor does not
@@ -102,6 +104,8 @@ This workflow was tested in 3D Slicer:
 - The status display reflects Segment Editor state directly, including active
   tool, selected segment, editable intensity range, overwrite mode, and brush
   size.
+- **Refresh Segment Volumes** uses Slicer's Segment Statistics logic and reports
+  current segment volumes in mL.
 - Editable intensity masking limits painting/erasing by source CT HU, but it
   does not make segments mutually exclusive. If two visible segments overlap,
   Slicer may show blended overlay colors. Use the Erase buttons to remove

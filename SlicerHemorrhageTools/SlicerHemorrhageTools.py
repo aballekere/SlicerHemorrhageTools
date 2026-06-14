@@ -118,6 +118,17 @@ class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMi
         self.maskToggleButton.clicked.connect(self.onToggleMask)
         formLayout.addRow(self.maskToggleButton)
 
+        refreshVolumesButton = qt.QPushButton("Refresh Segment Volumes")
+        refreshVolumesButton.toolTip = "List current segments and labelmap volumes for the active segmentation."
+        refreshVolumesButton.clicked.connect(self.onRefreshSegmentVolumes)
+        formLayout.addRow(refreshVolumesButton)
+
+        self.segmentVolumesTextEdit = qt.QPlainTextEdit()
+        self.segmentVolumesTextEdit.setReadOnly(True)
+        self.segmentVolumesTextEdit.maximumHeight = 120
+        self.segmentVolumesTextEdit.setPlainText("Segment volumes: not calculated")
+        formLayout.addRow("Volumes:", self.segmentVolumesTextEdit)
+
         self.statusLabel = qt.QLabel()
         self.statusLabel.wordWrap = True
         formLayout.addRow("Status:", self.statusLabel)
@@ -221,6 +232,13 @@ class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMi
     def onToggleMask(self):
         try:
             self.logic.toggleIntensityMask()
+            self.updateStatus()
+        except Exception as exc:
+            self.reportError(exc)
+
+    def onRefreshSegmentVolumes(self):
+        try:
+            self.segmentVolumesTextEdit.setPlainText(self.logic.segmentVolumesText())
             self.updateStatus()
         except Exception as exc:
             self.reportError(exc)
@@ -388,6 +406,82 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
             return False, "Select or add a segment in Segment Editor first."
 
         return True, "Ready."
+
+    def segmentVolumesText(self):
+        editorWidget = self.segmentEditorWidget()
+        segmentationNode = editorWidget.segmentationNode()
+        if not segmentationNode:
+            raise RuntimeError("Select a segmentation in Segment Editor first.")
+
+        import SegmentStatistics
+
+        statisticsLogic = SegmentStatistics.SegmentStatisticsLogic()
+        parameterNode = statisticsLogic.getParameterNode()
+        parameterNode.SetParameter("Segmentation", segmentationNode.GetID())
+
+        sourceVolumeNode = editorWidget.sourceVolumeNode() or self.backgroundVolumeNode()
+        if sourceVolumeNode:
+            parameterNode.SetParameter("ScalarVolume", sourceVolumeNode.GetID())
+
+        statisticsLogic.computeStatistics()
+        statistics = statisticsLogic.getStatistics()
+        segmentation = segmentationNode.GetSegmentation()
+        segmentIds = statistics["SegmentIDs"] if "SegmentIDs" in statistics else [
+            segmentation.GetNthSegmentID(index)
+            for index in range(segmentation.GetNumberOfSegments())
+        ]
+
+        if not segmentIds:
+            return "No segments in current segmentation."
+
+        lines = []
+        totalMl = 0.0
+        for segmentId in segmentIds:
+            segment = segmentation.GetSegment(segmentId)
+            segmentName = segment.GetName() if segment else segmentId
+            volumeMl = self.segmentVolumeMl(statistics, segmentId)
+
+            if volumeMl is None:
+                lines.append(f"{segmentName}: volume unavailable")
+                continue
+
+            totalMl += volumeMl
+            lines.append(f"{segmentName}: {volumeMl:.2f} mL")
+
+        if len(lines) > 1:
+            lines.append(f"Total: {totalMl:.2f} mL")
+        return "\n".join(lines)
+
+    def segmentVolumeMl(self, statistics, segmentId):
+        volumeCm3 = self.statisticValue(
+            statistics,
+            segmentId,
+            [
+                "LabelmapSegmentStatisticsPlugin.volume_cm3",
+                "ClosedSurfaceSegmentStatisticsPlugin.volume_cm3",
+            ],
+        )
+        if volumeCm3 is not None:
+            return float(volumeCm3)
+
+        volumeMm3 = self.statisticValue(
+            statistics,
+            segmentId,
+            [
+                "LabelmapSegmentStatisticsPlugin.volume_mm3",
+                "ClosedSurfaceSegmentStatisticsPlugin.volume_mm3",
+            ],
+        )
+        if volumeMm3 is not None:
+            return float(volumeMm3) / 1000.0
+
+        return None
+
+    def statisticValue(self, statistics, segmentId, keys):
+        for key in keys:
+            if (segmentId, key) in statistics:
+                return statistics[segmentId, key]
+        return None
 
     def status(self):
         try:
