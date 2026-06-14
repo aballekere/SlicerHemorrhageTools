@@ -3,11 +3,13 @@ import logging
 import ctk
 import qt
 import slicer
+import vtk
 from slicer.ScriptedLoadableModule import (
     ScriptedLoadableModule,
     ScriptedLoadableModuleWidget,
     ScriptedLoadableModuleLogic,
 )
+from slicer.util import VTKObservationMixin
 
 
 class SlicerHemorrhageTools(ScriptedLoadableModule):
@@ -26,12 +28,20 @@ class SlicerHemorrhageTools(ScriptedLoadableModule):
         self.parent.acknowledgementText = "Developed for rapid manual CT segmentation cleanup workflows."
 
 
-class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget):
+class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self)
+        VTKObservationMixin.__init__(self)
         self.logic = SlicerHemorrhageToolsLogic()
+        self.shortcuts = []
+        self.observedSegmentEditorNode = None
+        self.updatingOverwriteMode = False
+        self.updatingStatus = False
 
         self._buildUi()
+        self.setupShortcuts()
+        self.setupStatusTimer()
+        self.observeSegmentEditorNode()
         self.updateStatus()
 
     def _buildUi(self):
@@ -78,15 +88,29 @@ class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget):
         modeLayout.addWidget(self.eraseHighButton, 1, 1)
         formLayout.addRow(modeLayout)
 
+        self.workflowButtons = [
+            self.paintHighButton,
+            self.eraseLowButton,
+            self.paintLowButton,
+            self.eraseHighButton,
+        ]
+
+        self.overwriteModeComboBox = qt.QComboBox()
+        self.overwriteModeComboBox.addItem("Do not overwrite segments", "none")
+        self.overwriteModeComboBox.addItem("Overwrite visible segments", "visible")
+        self.overwriteModeComboBox.toolTip = "Controls how Paint handles overlap with other visible segments."
+        self.overwriteModeComboBox.currentIndexChanged.connect(lambda unusedIndex: self.onOverwriteModeChanged())
+        formLayout.addRow("Overwrite:", self.overwriteModeComboBox)
+
         brushLayout = qt.QHBoxLayout()
-        brushSmallerButton = qt.QPushButton("Brush Smaller")
-        brushLargerButton = qt.QPushButton("Brush Larger")
-        brushSmallerButton.toolTip = "Decrease Paint/Erase brush diameter."
-        brushLargerButton.toolTip = "Increase Paint/Erase brush diameter."
-        brushSmallerButton.clicked.connect(lambda: self.onAdjustBrush(-1.0))
-        brushLargerButton.clicked.connect(lambda: self.onAdjustBrush(1.0))
-        brushLayout.addWidget(brushSmallerButton)
-        brushLayout.addWidget(brushLargerButton)
+        self.brushSmallerButton = qt.QPushButton("Brush Smaller")
+        self.brushLargerButton = qt.QPushButton("Brush Larger")
+        self.brushSmallerButton.toolTip = "Decrease Paint/Erase brush diameter."
+        self.brushLargerButton.toolTip = "Increase Paint/Erase brush diameter."
+        self.brushSmallerButton.clicked.connect(lambda: self.onAdjustBrush(-1.0))
+        self.brushLargerButton.clicked.connect(lambda: self.onAdjustBrush(1.0))
+        brushLayout.addWidget(self.brushSmallerButton)
+        brushLayout.addWidget(self.brushLargerButton)
         formLayout.addRow(brushLayout)
 
         self.maskToggleButton = qt.QPushButton("Editable Intensity On/Off")
@@ -100,6 +124,34 @@ class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget):
 
         self.layout.addStretch(1)
         self.updateModeButtonLabels()
+
+    def cleanup(self):
+        self.removeObservers()
+        self.statusTimer.stop()
+        for shortcut in self.shortcuts:
+            shortcut.setEnabled(False)
+            shortcut.deleteLater()
+        self.shortcuts = []
+
+    def setupStatusTimer(self):
+        self.statusTimer = qt.QTimer(self.parent)
+        self.statusTimer.setInterval(1000)
+        self.statusTimer.timeout.connect(self.updateStatus)
+        self.statusTimer.start()
+
+    def setupShortcuts(self):
+        self.addShortcut("[", lambda: self.onAdjustBrush(-1.0))
+        self.addShortcut("]", lambda: self.onAdjustBrush(1.0))
+        self.addShortcut("1", lambda: self.onSetMode("Paint", "high"))
+        self.addShortcut("2", lambda: self.onSetMode("Erase", "low"))
+        self.addShortcut("3", lambda: self.onSetMode("Paint", "low"))
+        self.addShortcut("4", lambda: self.onSetMode("Erase", "high"))
+
+    def addShortcut(self, keySequence, callback):
+        shortcut = qt.QShortcut(qt.QKeySequence(keySequence), slicer.util.mainWindow())
+        shortcut.setContext(qt.Qt.ApplicationShortcut)
+        shortcut.activated.connect(callback)
+        self.shortcuts.append(shortcut)
 
     def createHuSpinBox(self, value):
         spinBox = qt.QSpinBox()
@@ -134,11 +186,15 @@ class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget):
 
     def onOpenSegmentEditor(self):
         slicer.util.selectModule("SegmentEditor")
+        self.observeSegmentEditorNode()
+        self.updateStatus()
 
     def onSetMode(self, effectName, rangeName):
         try:
             minimumHu, maximumHu = self.huRange(rangeName)
-            self.logic.setSegmentEditorMode(effectName, minimumHu, maximumHu)
+            overwriteMode = self.overwriteModeComboBox.itemData(self.overwriteModeComboBox.currentIndex)
+            self.logic.setSegmentEditorMode(effectName, minimumHu, maximumHu, overwriteMode)
+            self.syncOverwriteModeFromNode()
             self.updateStatus()
         except Exception as exc:
             self.reportError(exc)
@@ -169,11 +225,72 @@ class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self.reportError(exc)
 
+    def onOverwriteModeChanged(self):
+        if self.updatingOverwriteMode:
+            return
+
+        try:
+            overwriteMode = self.overwriteModeComboBox.itemData(self.overwriteModeComboBox.currentIndex)
+            self.logic.setOverwriteMode(overwriteMode)
+            self.updateStatus()
+        except Exception as exc:
+            self.reportError(exc)
+
     def updateStatus(self, message=None):
-        status = self.logic.status()
-        if message:
-            status = f"{message}\n{status}"
-        self.statusLabel.text = status
+        if self.updatingStatus:
+            return
+
+        self.updatingStatus = True
+        try:
+            self.observeSegmentEditorNode()
+            self.updateValidationState()
+            self.syncOverwriteModeFromNode()
+            status = self.logic.status()
+            if message:
+                status = f"{message}\n{status}"
+            self.statusLabel.text = status
+        finally:
+            self.updatingStatus = False
+
+    def updateValidationState(self):
+        isReady, _message = self.logic.validationState()
+        for button in self.workflowButtons:
+            button.enabled = isReady
+
+    def observeSegmentEditorNode(self):
+        segmentEditorNode = self.logic.segmentEditorNodeOrNone()
+        if segmentEditorNode == self.observedSegmentEditorNode:
+            return
+
+        if self.observedSegmentEditorNode and self.hasObserver(
+            self.observedSegmentEditorNode, vtk.vtkCommand.ModifiedEvent, self.onSegmentEditorNodeModified
+        ):
+            self.removeObserver(
+                self.observedSegmentEditorNode,
+                vtk.vtkCommand.ModifiedEvent,
+                self.onSegmentEditorNodeModified,
+            )
+
+        self.observedSegmentEditorNode = segmentEditorNode
+        if not segmentEditorNode:
+            return
+
+        self.addObserver(
+            segmentEditorNode, vtk.vtkCommand.ModifiedEvent, self.onSegmentEditorNodeModified
+        )
+
+    def onSegmentEditorNodeModified(self, caller, event):
+        self.updateStatus()
+
+    def syncOverwriteModeFromNode(self):
+        overwriteMode = self.logic.currentOverwriteModeKey()
+        index = self.overwriteModeComboBox.findData(overwriteMode)
+        if index < 0:
+            return
+
+        self.updatingOverwriteMode = True
+        self.overwriteModeComboBox.setCurrentIndex(index)
+        self.updatingOverwriteMode = False
 
     def reportError(self, exc):
         logging.exception(exc)
@@ -189,7 +306,6 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
 
     def __init__(self):
         ScriptedLoadableModuleLogic.__init__(self)
-        self.currentTool = "None"
         self.currentMaskRange = None
 
     def setBrainWindow(self):
@@ -207,7 +323,7 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
         displayNode.SetLevel(self.BRAIN_LEVEL)
         slicer.util.setSliceViewerLayers(background=volumeNode, fit=False)
 
-    def setSegmentEditorMode(self, effectName, minimumHu, maximumHu):
+    def setSegmentEditorMode(self, effectName, minimumHu, maximumHu, overwriteMode="none"):
         editorWidget = self.segmentEditorWidget()
         segmentEditorNode = self.segmentEditorNode(editorWidget)
 
@@ -218,10 +334,9 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
             raise RuntimeError(f"Could not activate Segment Editor effect: {effectName}")
 
         self.setIntensityMask(segmentEditorNode, minimumHu, maximumHu, True)
-        self.setDoNotOverwriteSegments(segmentEditorNode)
+        self.setOverwriteMode(overwriteMode)
         self.ensureBrushDiameter(editorWidget)
 
-        self.currentTool = effectName
         self.currentMaskRange = (minimumHu, maximumHu)
 
     def adjustBrushSize(self, deltaMm):
@@ -253,19 +368,42 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
         if volumeNode:
             editorWidget.setSourceVolumeNode(volumeNode)
 
+    def validationState(self):
+        try:
+            editorWidget = self.segmentEditorWidget()
+        except Exception:
+            return False, "Open Segment Editor once so Slicer can initialize the editor."
+
+        if not editorWidget.segmentationNode():
+            return False, "Select a segmentation in Segment Editor first."
+        if not editorWidget.sourceVolumeNode() and not self.backgroundVolumeNode():
+            return False, "No source volume detected. Please load a CT volume."
+
+        try:
+            segmentEditorNode = self.segmentEditorNode(editorWidget)
+        except Exception:
+            return False, "Segment Editor is not ready yet."
+
+        if not segmentEditorNode.GetSelectedSegmentID():
+            return False, "Select or add a segment in Segment Editor first."
+
+        return True, "Ready."
+
     def status(self):
         try:
             editorWidget = self.segmentEditorWidget()
             segmentEditorNode = self.segmentEditorNode(editorWidget)
             activeEffect = editorWidget.activeEffect()
-            toolName = self.effectName(activeEffect) if activeEffect else self.currentTool
+            toolName = self.effectName(activeEffect) if activeEffect else "None"
             maskEnabled = bool(segmentEditorNode.GetSourceVolumeIntensityMask())
             minimumHu, maximumHu = segmentEditorNode.GetSourceVolumeIntensityMaskRange()
             maskText = f"{minimumHu:g}-{maximumHu:g} HU" if maskEnabled else "Off"
             brushText = self.brushStatus(activeEffect)
             overwriteText = self.overwriteStatus(segmentEditorNode)
             segmentText = self.selectedSegmentName(editorWidget, segmentEditorNode)
+            isReady, validationMessage = self.validationState()
             return (
+                f"Ready: {'Yes' if isReady else 'No'} - {validationMessage}\n"
                 f"Tool: {toolName or 'None'}\n"
                 f"Segment: {segmentText}\n"
                 f"Editable intensity: {maskText}\n"
@@ -279,22 +417,35 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
         segmentEditorNode.SetSourceVolumeIntensityMask(enabled)
         segmentEditorNode.SetSourceVolumeIntensityMaskRange(float(minimumHu), float(maximumHu))
 
-    def setDoNotOverwriteSegments(self, segmentEditorNode):
-        overwriteNone = getattr(slicer.vtkMRMLSegmentEditorNode, "OverwriteNone", 2)
-        segmentEditorNode.SetOverwriteMode(overwriteNone)
+    def setOverwriteMode(self, overwriteMode):
+        editorWidget = self.segmentEditorWidget()
+        segmentEditorNode = self.segmentEditorNode(editorWidget)
+        segmentEditorNode.SetOverwriteMode(self.overwriteModeValue(overwriteMode))
+
+    def overwriteModeValue(self, overwriteMode):
+        if overwriteMode == "visible":
+            return getattr(slicer.vtkMRMLSegmentEditorNode, "OverwriteVisibleSegments", 1)
+        return getattr(slicer.vtkMRMLSegmentEditorNode, "OverwriteNone", 2)
+
+    def currentOverwriteModeKey(self):
+        segmentEditorNode = self.segmentEditorNodeOrNone()
+        if not segmentEditorNode:
+            return "none"
+
+        overwriteMode = segmentEditorNode.GetOverwriteMode()
+        overwriteVisible = getattr(slicer.vtkMRMLSegmentEditorNode, "OverwriteVisibleSegments", 1)
+        return "visible" if overwriteMode == overwriteVisible else "none"
 
     def backgroundVolumeNode(self):
         layoutManager = slicer.app.layoutManager()
         if layoutManager:
-            for sliceViewName in layoutManager.sliceViewNames():
-                sliceWidget = layoutManager.sliceWidget(sliceViewName)
-                compositeNode = sliceWidget.mrmlSliceCompositeNode()
-                volumeId = compositeNode.GetBackgroundVolumeID()
-                if volumeId:
-                    return slicer.mrmlScene.GetNodeByID(volumeId)
+            sliceWidget = layoutManager.sliceWidget("Red")
+            if sliceWidget:
+                volumeNode = sliceWidget.sliceLogic().GetBackgroundLayer().GetVolumeNode()
+                if volumeNode:
+                    return volumeNode
 
-        volumeNodes = slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode")
-        return volumeNodes[0] if volumeNodes else None
+        return None
 
     def segmentEditorWidget(self):
         segmentEditorModuleWidget = slicer.util.getModuleWidget("SegmentEditor")
@@ -314,6 +465,12 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
         if not segmentEditorNode:
             raise RuntimeError("Segment Editor does not have an active parameter node.")
         return segmentEditorNode
+
+    def segmentEditorNodeOrNone(self):
+        try:
+            return self.segmentEditorNode(self.segmentEditorWidget())
+        except Exception:
+            return None
 
     def requireSegmentEditorContext(self, editorWidget, segmentEditorNode):
         if not editorWidget.segmentationNode():

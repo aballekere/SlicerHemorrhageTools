@@ -11,8 +11,12 @@ HU-constrained Paint and Erase workflows:
 - Paint or erase with either HU range
 - Increase or decrease brush size
 - Toggle editable intensity masking
+- Toggle overwrite behavior between **do not overwrite segments** and
+  **overwrite visible segments**
 - Show current tool, HU mask, and brush status
-- Set Segment Editor overwrite mode to avoid overwriting other segments
+- Validate source volume, segmentation, and active segment before enabling
+  workflow buttons
+- Keyboard shortcuts for brush size and workflow modes
 - Open Segment Editor from the module panel when setup is needed
 
 ![Hemorrhage and perihematomal edema cleanup example](docs/images/hemorrhage-edema-cleanup.png)
@@ -54,12 +58,24 @@ This module is intended for 3D Slicer 5.10.
    segmentation, or active segment.
 4. Return to Hemorrhage Tools.
 5. Adjust either HU range if needed.
-6. Click the desired workflow button.
+6. Choose the overwrite behavior.
+7. Click the desired workflow button.
 
 The module uses the current Segment Editor context. It does not create a new
 segmentation or force re-selection of volumes. If Segment Editor does not
 already have a source volume selected, the module uses the current background
-volume from the slice viewers.
+volume from the Red slice viewer.
+
+## Shortcuts
+
+When Slicer is focused:
+
+- `[` decreases brush size by 1 mm.
+- `]` increases brush size by 1 mm.
+- `1` activates Paint with Range 1.
+- `2` activates Erase with Range 2.
+- `3` activates Paint with Range 2.
+- `4` activates Erase with Range 1.
 
 ## Tested Workflow
 
@@ -80,12 +96,16 @@ This workflow was tested in 3D Slicer:
 - Brain window currently uses window 80 and level 40.
 - Brush size changes by 1 mm per click, with a minimum diameter of 0.5 mm.
 - The Paint/Erase buttons use the HU values currently shown in the range fields.
-- Applying a Paint/Erase mode sets Segment Editor overwrite mode to
-  **do not overwrite segments**.
+- The workflow buttons are disabled until Segment Editor has a source volume,
+  segmentation, and selected segment. If Segment Editor has no source volume,
+  the module uses the Red slice background volume when available.
+- The status display reflects Segment Editor state directly, including active
+  tool, selected segment, editable intensity range, overwrite mode, and brush
+  size.
 - Editable intensity masking limits painting/erasing by source CT HU, but it
   does not make segments mutually exclusive. If two visible segments overlap,
   Slicer may show blended overlay colors. Use the Erase buttons to remove
   spillover from the active segment, and confirm the correct active segment in
   Segment Editor before painting.
-- Keyboard shortcuts are intentionally left out of the first version so the
-  interface stays clear for handoff to students.
+- Keyboard shortcuts are intentionally minimal and mirror the visible workflow
+  buttons.
