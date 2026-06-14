@@ -435,6 +435,7 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
             return "No segments in current segmentation."
 
         lines = []
+        namedVolumesMl = []
         totalMl = 0.0
         for segmentId in segmentIds:
             segment = segmentation.GetSegment(segmentId)
@@ -446,11 +447,39 @@ class SlicerHemorrhageToolsLogic(ScriptedLoadableModuleLogic):
                 continue
 
             totalMl += volumeMl
+            namedVolumesMl.append((segmentName, volumeMl))
             lines.append(f"{segmentName}: {volumeMl:.2f} mL")
 
         if len(lines) > 1:
             lines.append(f"Total: {totalMl:.2f} mL")
+            ratioText = self.pheToHematomaRatioText(namedVolumesMl)
+            if ratioText:
+                lines.append(ratioText)
         return "\n".join(lines)
+
+    def pheToHematomaRatioText(self, namedVolumesMl):
+        hematomaVolumeMl = self.firstMatchingVolume(
+            namedVolumesMl,
+            ["hematoma", "haematoma", "hemorrhage", "haemorrhage", "ich"],
+        )
+        pheVolumeMl = self.firstMatchingVolume(
+            namedVolumesMl,
+            ["phe", "edema", "oedema", "perihematomal", "perihaematomal"],
+        )
+
+        if hematomaVolumeMl is None or pheVolumeMl is None:
+            return ""
+        if hematomaVolumeMl <= 0:
+            return "PHE/Hematoma ratio: unavailable (hematoma volume is 0 mL)"
+
+        return f"PHE/Hematoma ratio: {pheVolumeMl / hematomaVolumeMl:.2f}"
+
+    def firstMatchingVolume(self, namedVolumesMl, keywords):
+        for segmentName, volumeMl in namedVolumesMl:
+            normalizedName = segmentName.lower()
+            if any(keyword in normalizedName for keyword in keywords):
+                return volumeMl
+        return None
 
     def segmentVolumeMl(self, statistics, segmentId):
         volumeCm3 = self.statisticValue(
