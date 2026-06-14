@@ -78,8 +78,7 @@ This workflow was tested in 3D Slicer:
 ## Notes
 
 - Brain window currently uses window 80 and level 40.
-- Brush size changes by 1 percentage point per click, using Slicer's relative
-  brush size setting.
+- Brush size changes by 1 mm per click, with a minimum diameter of 0.5 mm.
 - The Paint/Erase buttons use the HU values currently shown in the range fields.
 - Applying a Paint/Erase mode sets Segment Editor overwrite mode to
   **do not overwrite segments**.
