@@ -19,12 +19,11 @@ class SlicerHemorrhageTools(ScriptedLoadableModule):
         self.parent.categories = ["Segmentation"]
         self.parent.dependencies = ["SegmentEditor"]
         self.parent.contributors = ["Anjan Ballekere"]
-        self.parent.helpText = """
-Hemorrhage cleanup helpers for 3D Slicer Segment Editor.
-Use the buttons to set a brain CT window, switch Paint/Erase effects,
-apply editable intensity ranges, and adjust brush size.
-"""
-        self.parent.acknowledgementText = ""
+        self.parent.helpText = (
+            "One-click tools for HU-constrained hemorrhage and edema cleanup "
+            "in 3D Slicer's Segment Editor."
+        )
+        self.parent.acknowledgementText = "Developed for rapid manual CT segmentation cleanup workflows."
 
 
 class SlicerHemorrhageToolsWidget(ScriptedLoadableModuleWidget):
