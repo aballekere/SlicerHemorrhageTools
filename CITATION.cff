@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Ballekere"
+    given-names: "Anjan Nagesh"
+    email: "anjanballekere@gmail.com"
+title: "SlicerHemorrhageTools"
+version: 1.0.0
+date-released: "2026-06-20"
+url: "https://github.com/aballekere/SlicerHemorrhageTools"
+abstract: "A 3D Slicer module for manual hemorrhage segmentation cleanup and batch case management."
+license: "MIT"

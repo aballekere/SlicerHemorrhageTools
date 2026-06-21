@@ -1,3 +1,15 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+
+# Exclude Morphology Module
+SlicerMorphology/
+
+# Exclude Local Analysis and Logs
+Finger like projections.txt
+git_diff.txt
+literature_review.md
+method_comparison_results.md
+test_features.py
+walkthrough.md
+worklog.md
